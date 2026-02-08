@@ -24,9 +24,6 @@ To replicate the benchmark results from the paper:
 2. Open MATLAB (tested on R2024a and newer).
 3. Run the `main.m` script.
 
-```matlab
->> main
-
 ---
 
 ## Citation
