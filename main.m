@@ -1,9 +1,14 @@
 % =========================================================================
-% Main Benchmark Script for RDCO
+% Receptor-driven cycloidal optimization (RDCO)
+% Developed in MATLAB R2024a
 %
-% This script runs the benchmark experiments for the paper:
-% "Receptor-Driven Cycloidal Optimization (RDCO): A Novel Bio-Inspired 
-%  Algorithm with Dynamic Geometric Search"
+% Programmer: Lin Yang
+% Email: 15765057075@163.com
+%
+% Please cite the main paper if you use this code in your research.
+% Lin Yang and Hongwen Xu,Receptor-driven cycloidal optimization: Integrating biological control models 
+% with geometric search trajectories for engineering design optimization
+% Applied Mathematical Modelling, DOI: 10.1016/j.apm.2026.116827
 % =========================================================================
 
 clc;

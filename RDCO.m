@@ -1,38 +1,24 @@
-function [BestSol] = RDCO(fhd, nVar, VarMin, VarMax, nPop, MaxFEs, func_num)
 % =========================================================================
-% Core function for the Receptor-Driven Cycloidal Optimization (RDCO) algorithm
+% Receptor-driven cycloidal optimization (RDCO)
+% Developed in MATLAB R2024a
 %
-% As presented in the paper:
-% "Receptor-Driven Cycloidal Optimization (RDCO): A Novel Bio-Inspired
-%  Algorithm with Dynamic Geometric Search"
-%
-% Author: Lin Yang
-% Affiliation: Mudanjiang Normal University
+% Programmer: Lin Yang
 % Email: 15765057075@163.com
 %
 % Please cite the main paper if you use this code in your research.
-% (Full citation details will be provided upon the paper's publication.)
-% =========================================================================
-%
-% INPUTS
-%   fhd         : Function handle for the objective function
-%   nVar        : Problem dimensionality
-%   VarMin/VarMax: Search space boundaries
-%   nPop        : Population size
-%   MaxFEs      : Maximum function evaluations (stopping criterion)
-%   func_num    : CEC function number (if applicable)
-%
-% OUTPUTS
-%   BestSol     : A struct containing the best solution (Position and Cost)
+% Lin Yang and Hongwen Xu,Receptor-driven cycloidal optimization: Integrating biological control models 
+% with geometric search trajectories for engineering design optimization
+% Applied Mathematical Modelling, DOI: 10.1016/j.apm.2026.116827
 % =========================================================================
 
-%% 0. Initialization
-% --- Algorithm-specific constants ---
-ALPHA_COEFF = 0.3; % Weighting factor for receptor-driven vs. random behavior
-PHI_CONST = (sqrt(5) - 1) / 2; % Golden ratio, for epicycloid operator
-EPSILON = 1e-8;     % To prevent division by zero
+function [BestSol] = RDCO(fhd, nVar, VarMin, VarMax, nPop, MaxFEs, func_num)
 
-% --- Population and Global Best Initialization ---
+%% 0. Algorithm Constants
+ALPHA_COEFF = 0.3;              % Strength coefficient alpha
+PHI_CONST = (sqrt(5) - 1) / 2;  % Fixed expansion factor k2 
+EPSILON = 1e-8;                 % Small constant to prevent division by zero
+
+%% 1. Population Initialization
 empty_individual.Position = [];
 empty_individual.Cost = [];
 pop = repmat(empty_individual, nPop, 1);
@@ -49,11 +35,13 @@ for i = 1:nPop
     if current_FEs >= MaxFEs; return; end
 end
 
-%% 1. Main Optimization Loop
-iter = 1;
+%% 2. Main Optimization Loop
 while current_FEs < MaxFEs
 
-    % --- 1.1. Fitness Sorting and Global Best Update ---
+    % ================================================================
+    % Phase 1: Dynamic Ranking and Tier Assignment
+    % ================================================================
+    % Sort the population by fitness. Assign ranks where rank=1 is best.
     Costs = [pop.Cost];
     [~, SortIdx] = sort(Costs);
     if pop(SortIdx(1)).Cost < BestSol.Cost
@@ -61,53 +49,70 @@ while current_FEs < MaxFEs
     end
     gbest_pos = BestSol.Position;
 
-    % --- 1.2. Population Tiering for Role Assignment ---
-    N1 = floor(nPop/3);
-    N2 = floor(nPop/3);
-    S = min([N1, N2, (nPop - N1 - N2)]); % Number of collaborative subgroups
+    % Partition into three tiers: Top (elite guides), Mid (exploitation),
+    % and Bot (exploration). Form S collaborative subgroups.
+    N1 = floor(nPop / 3);
+    N2 = floor(nPop / 3);
+    N3 = nPop - N1 - N2;
+    S = min([N1, N2, N3]);
 
+    % Randomly select one member from each tier without replacement
+    % to form each subgroup, ensuring diverse collaboration.
     if S > 0
-        top_indices = SortIdx(1:S);
-        mid_indices = SortIdx(N1+1 : N1+S);
-        bot_indices = SortIdx(N1+N2+1 : N1+N2+S);
+        all_top_indices = SortIdx(1:N1);
+        all_mid_indices = SortIdx(N1 + 1 : N1 + N2);
+        all_bot_indices = SortIdx(N1 + N2 + 1 : nPop);
+
+        top_indices = all_top_indices(randperm(N1, S));
+        mid_indices = all_mid_indices(randperm(N2, S));
+        bot_indices = all_bot_indices(randperm(N3, S));
     end
 
-    % --- 1.3. Receptor-Driven Control Mechanism (Hill Equation) ---
-    % This section implements the adaptive control based on agent performance (rank).
+    % Identify the residual set X_remaining.
+    is_in_subgroup = false(1, nPop);
+    if S > 0
+        is_in_subgroup(top_indices) = true;
+        is_in_subgroup(mid_indices) = true;
+        is_in_subgroup(bot_indices) = true;
+    end
+    remaining_indices = find(~is_in_subgroup);
+
+    % Compute the rank of each individual.
     current_ranks = zeros(1, nPop);
     current_ranks(SortIdx) = 1:nPop;
 
-    if S > 0
-        % Normalized rank (L), serves as the "stimulus" for the Hill equation.
-        L_mid = (nPop - current_ranks(mid_indices)) / (nPop - 1 + EPSILON);
-        L_bot = (nPop - current_ranks(bot_indices)) / (nPop - 1 + EPSILON);
-    end
-
-    % Dynamic Hill model parameters adapt based on search progress (tau).
+    % ================================================================
+    % Phase 2: Receptor-Driven Activation Modeling
+    % ================================================================
+    % Calculate the search progress ratio tau and update the dynamic
+    % Hill equation parameters.
     tau = current_FEs / MaxFEs;
-    n_mu = 2 - 0.8*tau + 0.1*randn();      % Hill coefficient for exploration (mu)
-    n_kappa = 0.3 + 0.6*tau + 0.05*randn(); % Hill coefficient for exploitation (kappa)
-    K_mu = 0.8 - 0.4*tau;                 % Dissociation constant for exploration
-    K_kappa = 0.2 + 0.4*tau;              % Dissociation constant for exploitation
+    n_mu    = 2 - 0.8 * tau + 0.1 * randn();
+    n_kappa = 0.3 + 0.6 * tau + 0.05 * randn();
+    K_mu    = 0.8 - 0.4 * tau;
+    K_kappa = 0.2 + 0.4 * tau;
 
-    % Calculate activation levels (E) based on the Hill equation.
+    % Compute the normalized rank L_i and the excitatory/inhibitory
+    % activation levels E_mu, E_kappa for mid-tier and bot-tier agents.
     if S > 0
-        E_mu_mid = (L_mid.^n_mu) ./ (K_mu^n_mu + L_mid.^n_mu + EPSILON);
-        E_kappa_mid = (L_mid.^n_kappa) ./ (K_kappa^n_kappa + L_mid.^n_kappa + EPSILON);
+        L_mid = (nPop - current_ranks(mid_indices)) / (nPop - 1 + EPSILON);
+        E_mu_mid    = (L_mid .^ n_mu) ./ (K_mu ^ n_mu + L_mid .^ n_mu + EPSILON);
+        E_kappa_mid = (L_mid .^ n_kappa) ./ (K_kappa ^ n_kappa + L_mid .^ n_kappa + EPSILON);
         E_overall_mid = max(E_mu_mid, E_kappa_mid);
 
-        E_mu_bot = (L_bot.^n_mu) ./ (K_mu^n_mu + L_bot.^n_mu + EPSILON);
-        E_kappa_bot = (L_bot.^n_kappa) ./ (K_kappa^n_kappa + L_bot.^n_kappa + EPSILON);
+        L_bot = (nPop - current_ranks(bot_indices)) / (nPop - 1 + EPSILON);
+        E_mu_bot    = (L_bot .^ n_mu) ./ (K_mu ^ n_mu + L_bot .^ n_mu + EPSILON);
+        E_kappa_bot = (L_bot .^ n_kappa) ./ (K_kappa ^ n_kappa + L_bot .^ n_kappa + EPSILON);
         E_overall_bot = max(E_mu_bot, E_kappa_bot);
     end
 
-    if S > 0
-        x_subbest_indices = zeros(1,S);
-        x_subbest_E_mu = zeros(1,S);
-        x_subbest_E_kappa = zeros(1,S);
-    end
+    % ================================================================
+    % Phase 3: Differentiated Position Updates
+    % ================================================================
+    % Time-dependent exploitation radius parameter k1.
+    k1 = 0.1 + 0.4 * tau;
 
-    %% 1.4. Geometric Search Operators (Cycloids)
+    % --- Step 3a: Subgroup Collaborative Updates ---
     for k = 1:S
         if current_FEs >= MaxFEs; break; end
 
@@ -115,108 +120,164 @@ while current_FEs < MaxFEs
         x_mid = pop(mid_indices(k)).Position;
         x_bot = pop(bot_indices(k)).Position;
 
-        % --- Hypocycloid Operator for Local Exploitation (Middle-tier agent) ---
-        R1 = x_top - x_mid;
-        norm_R1 = norm(R1);
+        % Middle-tier update: Hypocycloid operator for exploitation.
+        % Construct the 2D search plane via Gram-Schmidt.
+        R1 = x_top - x_mid; norm_R1 = norm(R1);
         d1 = R1 / (norm_R1 + EPSILON);
-        u1 = randn(1, nVar) - dot(randn(1, nVar), d1) * d1; u1 = u1 / (norm(u1) + EPSILON);
-        theta1 = 2*pi * (ALPHA_COEFF * E_overall_mid(k) + (1-ALPHA_COEFF)*rand());
-        v1 = cos(theta1)*d1 + sin(theta1)*u1;
-        k1 = 0.1 + 0.4*tau; % Hypocycloid parameter
-        theta1_prime = (1/k1 - 1) * theta1;
-        v1_prime = cos(theta1_prime)*d1 + sin(theta1_prime)*u1;
-        new_mid_pos = x_top + (1-k1)*norm_R1*v1 + k1*norm_R1*v1_prime;
+        r1 = randn(1, nVar); u1 = r1 - dot(r1, d1) * d1; u1 = u1 / (norm(u1) + EPSILON);
+        theta1 = 2*pi * (ALPHA_COEFF * E_overall_mid(k) + (1 - ALPHA_COEFF) * rand());
+        v1 = cos(theta1) * d1 + sin(theta1) * u1;
+        theta1_p = (1/k1 - 1) * theta1;
+        v1_p = cos(theta1_p) * d1 + sin(theta1_p) * u1;
+        new_mid_pos = x_top + (1 - k1) * norm_R1 * v1 + k1 * norm_R1 * v1_p;
 
-        % --- Epicycloid Operator for Global Exploration (Bottom-tier agent) ---
-        R2 = x_top - x_bot;
-        norm_R2 = norm(R2);
+        % Bottom-tier update: Epicycloid operator for exploration.
+        R2 = x_top - x_bot; norm_R2 = norm(R2);
         d2 = R2 / (norm_R2 + EPSILON);
-        u2 = randn(1, nVar) - dot(randn(1, nVar), d2) * d2; u2 = u2 / (norm(u2) + EPSILON);
-        theta2 = 2*pi * (ALPHA_COEFF * E_overall_bot(k) + (1-ALPHA_COEFF)*rand());
-        v2 = cos(theta2)*d2 + sin(theta2)*u2;
-        k2 = PHI_CONST; % Epicycloid parameter
-        theta2_prime = (1 + 1/k2) * theta2;
-        v2_prime = cos(theta2_prime)*d2 + sin(theta2_prime)*u2;
-        new_bot_pos = x_top + (1+k2)*norm_R2*v2 - k2*norm_R2*v2_prime;
+        r2 = randn(1, nVar); u2 = r2 - dot(r2, d2) * d2; u2 = u2 / (norm(u2) + EPSILON);
+        theta2 = 2*pi * (ALPHA_COEFF * E_overall_bot(k) + (1 - ALPHA_COEFF) * rand());
+        v2 = cos(theta2) * d2 + sin(theta2) * u2;
+        theta2_p = (1 + 1/PHI_CONST) * theta2;
+        v2_p = cos(theta2_p) * d2 + sin(theta2_p) * u2;
+        new_bot_pos = x_top + (1 + PHI_CONST) * norm_R2 * v2 - PHI_CONST * norm_R2 * v2_p;
 
-        % --- Fusion Update for Top-tier agent ---
-        new_top_pos = x_top + (new_mid_pos - x_top)*E_overall_mid(k) + (new_bot_pos - x_top)*E_overall_bot(k);
+        % Apply boundary handling to mid and bot candidates.
+        new_mid_pos = apply_bounds(new_mid_pos, VarMin, VarMax);
+        new_bot_pos = apply_bounds(new_bot_pos, VarMin, VarMax);
 
-        % --- Evaluation and Greedy Selection ---
-        new_mid_pos = max(min(new_mid_pos, VarMax), VarMin);
-        new_mid_cost = feval(fhd, new_mid_pos', func_num); current_FEs=current_FEs+1; if current_FEs>=MaxFEs; break; end
+        % Top-tier update: Collaborative fusion of bounded mid/bot.
+        new_top_pos = x_top ...
+            + (new_mid_pos - x_top) * E_overall_mid(k) ...
+            + (new_bot_pos - x_top) * E_overall_bot(k);
+        new_top_pos = apply_bounds(new_top_pos, VarMin, VarMax);
+
+        % Greedy selection: accept the new position only if it yields a
+        % strictly lower objective value.
+        new_mid_cost = feval(fhd, new_mid_pos', func_num);
+        current_FEs = current_FEs + 1;
+        if current_FEs >= MaxFEs; break; end
         if new_mid_cost < pop(mid_indices(k)).Cost
-            pop(mid_indices(k)).Position = new_mid_pos; pop(mid_indices(k)).Cost = new_mid_cost;
+            pop(mid_indices(k)).Position = new_mid_pos;
+            pop(mid_indices(k)).Cost = new_mid_cost;
             if new_mid_cost < BestSol.Cost; BestSol = pop(mid_indices(k)); end
         end
 
-        new_bot_pos = max(min(new_bot_pos, VarMax), VarMin);
-        new_bot_cost = feval(fhd, new_bot_pos', func_num); current_FEs=current_FEs+1; if current_FEs>=MaxFEs; break; end
+        new_bot_cost = feval(fhd, new_bot_pos', func_num);
+        current_FEs = current_FEs + 1;
+        if current_FEs >= MaxFEs; break; end
         if new_bot_cost < pop(bot_indices(k)).Cost
-            pop(bot_indices(k)).Position = new_bot_pos; pop(bot_indices(k)).Cost = new_bot_cost;
+            pop(bot_indices(k)).Position = new_bot_pos;
+            pop(bot_indices(k)).Cost = new_bot_cost;
             if new_bot_cost < BestSol.Cost; BestSol = pop(bot_indices(k)); end
         end
 
-        new_top_pos = max(min(new_top_pos, VarMax), VarMin);
-        new_top_cost = feval(fhd, new_top_pos', func_num); current_FEs=current_FEs+1; if current_FEs>=MaxFEs; break; end
+        new_top_cost = feval(fhd, new_top_pos', func_num);
+        current_FEs = current_FEs + 1;
+        if current_FEs >= MaxFEs; break; end
         if new_top_cost < pop(top_indices(k)).Cost
-            pop(top_indices(k)).Position = new_top_pos; pop(top_indices(k)).Cost = new_top_cost;
+            pop(top_indices(k)).Position = new_top_pos;
+            pop(top_indices(k)).Cost = new_top_cost;
             if new_top_cost < BestSol.Cost; BestSol = pop(top_indices(k)); end
         end
 
-        sub_indices = [top_indices(k), mid_indices(k), bot_indices(k)];
-        sub_costs = [pop(top_indices(k)).Cost, pop(mid_indices(k)).Cost, pop(bot_indices(k)).Cost];
-        [~, min_idx] = min(sub_costs);
-        x_subbest_indices(k) = sub_indices(min_idx);
+    end 
+    if current_FEs >= MaxFEs; break; end
 
-        rank_sub = current_ranks(x_subbest_indices(k)); L_sub = (nPop-rank_sub)/(nPop-1+EPSILON);
-        x_subbest_E_mu(k) = (L_sub^n_mu) / (K_mu^n_mu + L_sub^n_mu + EPSILON);
-        x_subbest_E_kappa(k) = (L_sub^n_kappa) / (K_kappa^n_kappa + L_sub^n_kappa + EPSILON);
+    % --- Step 3b: Global-Guided Refinement ---
+    % After all subgroups are updated, re-rank the population to reflect
+    % changes from Step 3a. The activation levels for each subgroup's best
+    % member are recalculated based on this updated ranking.
+    Costs_updated = [pop.Cost];
+    [~, SortIdx_updated] = sort(Costs_updated);
+    updated_ranks = zeros(1, nPop);
+    updated_ranks(SortIdx_updated) = 1:nPop;
+
+    if pop(SortIdx_updated(1)).Cost < BestSol.Cost
+        BestSol = pop(SortIdx_updated(1));
+        gbest_pos = BestSol.Position;
+    end
+
+    for k = 1:S
+        if current_FEs >= MaxFEs; break; end
+
+        % Identify the best member of the k-th subgroup.
+        sub_idx = [top_indices(k), mid_indices(k), bot_indices(k)];
+        sub_costs = [pop(sub_idx(1)).Cost, pop(sub_idx(2)).Cost, pop(sub_idx(3)).Cost];
+        [~, min_idx] = min(sub_costs);
+        idx_subbest = sub_idx(min_idx);
+        pos_subbest = pop(idx_subbest).Position;
+
+        % Recalculate activation based on the updated rank.
+        rank_sub = updated_ranks(idx_subbest);
+        L_sub = (nPop - rank_sub) / (nPop - 1 + EPSILON);
+        E_mu_sub    = (L_sub ^ n_mu) / (K_mu ^ n_mu + L_sub ^ n_mu + EPSILON);
+        E_kappa_sub = (L_sub ^ n_kappa) / (K_kappa ^ n_kappa + L_sub ^ n_kappa + EPSILON);
+        E_overall_sub = max(E_mu_sub, E_kappa_sub);
+
+        % Direction toward the global best.
+        R3 = gbest_pos - pos_subbest;
+        norm_R3 = norm(R3);
+        if norm_R3 < EPSILON; continue; end
+
+        d3 = R3 / norm_R3;
+        r3 = randn(1, nVar); u3 = r3 - dot(r3, d3) * d3; u3 = u3 / (norm(u3) + EPSILON);
+        theta3 = 2*pi * (ALPHA_COEFF * E_overall_sub + (1 - ALPHA_COEFF) * rand());
+        v3 = cos(theta3) * d3 + sin(theta3) * u3;
+
+        % Select update type based on activation dominance:
+        % E_mu > E_kappa => hypocycloidal (local); otherwise => epicycloidal (global).
+        if E_mu_sub > E_kappa_sub
+            theta3_p = (1/k1 - 1) * theta3;
+            v3_p = cos(theta3_p) * d3 + sin(theta3_p) * u3;
+            new_pos = gbest_pos + (1 - k1) * norm_R3 * v3 + k1 * norm_R3 * v3_p;
+        else
+            theta3_p = (1 + 1/PHI_CONST) * theta3;
+            v3_p = cos(theta3_p) * d3 + sin(theta3_p) * u3;
+            new_pos = gbest_pos + (1 + PHI_CONST) * norm_R3 * v3 - PHI_CONST * norm_R3 * v3_p;
+        end
+
+        new_pos = apply_bounds(new_pos, VarMin, VarMax);
+        new_cost = feval(fhd, new_pos', func_num);
+        current_FEs = current_FEs + 1;
+        if current_FEs >= MaxFEs; break; end
+        if new_cost < pop(idx_subbest).Cost
+            pop(idx_subbest).Position = new_pos;
+            pop(idx_subbest).Cost = new_cost;
+            if new_cost < BestSol.Cost; BestSol = pop(idx_subbest); end
+        end
+
     end
     if current_FEs >= MaxFEs; break; end
 
-    %% 1.5. Update for Remaining (Non-subgroup) Individuals
-    is_in_subgroup = false(1,nPop);
-    if S>0; is_in_subgroup(top_indices)=true; is_in_subgroup(mid_indices)=true; is_in_subgroup(bot_indices)=true; end
-    remaining_indices = find(~is_in_subgroup);
-    for i=1:length(remaining_indices)
+    % --- Step 3c: Residual Individual Re-initialization ---
+    % Individuals not in any subgroup are re-initialized to inject diversity.
+    % When N is divisible by 3, the residual set is empty.
+    for i = 1:length(remaining_indices)
         if current_FEs >= MaxFEs; break; end
         idx = remaining_indices(i);
-        pop(idx).Position = unifrnd(VarMin, VarMax, [1,nVar]);
-        pop(idx).Cost = feval(fhd, pop(idx).Position', func_num); current_FEs=current_FEs+1;
+        pop(idx).Position = unifrnd(VarMin, VarMax, [1, nVar]);
+        pop(idx).Cost = feval(fhd, pop(idx).Position', func_num);
+        current_FEs = current_FEs + 1;
         if pop(idx).Cost < BestSol.Cost; BestSol = pop(idx); end
     end
     if current_FEs >= MaxFEs; break; end
 
-    %% 1.6. Global Guidance for Subgroup Leaders
-    for k = 1:S
-        if current_FEs >= MaxFEs; break; end
-        idx_subbest = x_subbest_indices(k);
-        pos_subbest = pop(idx_subbest).Position;
-        E_mu = x_subbest_E_mu(k); E_kappa = x_subbest_E_kappa(k);
-        R3 = gbest_pos - pos_subbest; norm_R3 = norm(R3); if norm_R3<EPSILON; continue; end
-        d3 = R3 / norm_R3;
-        u3 = randn(1,nVar) - dot(randn(1,nVar),d3)*d3; u3=u3/(norm(u3)+EPSILON);
-        theta3 = 2*pi*(ALPHA_COEFF*max(E_mu,E_kappa) + (1-ALPHA_COEFF)*rand());
-        v3 = cos(theta3)*d3 + sin(theta3)*u3;
-        if E_mu > E_kappa % Hypocycloid towards global best
-            theta3_prime = (1/k1-1)*theta3;
-            v3_prime = cos(theta3_prime)*d3 + sin(theta3_prime)*u3;
-            new_pos = gbest_pos + (1-k1)*norm_R3*v3 + k1*norm_R3*v3_prime;
-        else % Epicycloid towards global best
-            theta3_prime = (1+1/k2)*theta3;
-            v3_prime = cos(theta3_prime)*d3 + sin(theta3_prime)*u3;
-            new_pos = gbest_pos + (1+k2)*norm_R3*v3 - k2*norm_R3*v3_prime;
-        end
-        new_pos = max(min(new_pos, VarMax), VarMin);
-        new_cost = feval(fhd, new_pos', func_num); current_FEs=current_FEs+1; if current_FEs>=MaxFEs; break; end
-        if new_cost < pop(idx_subbest).Cost
-            pop(idx_subbest).Position = new_pos; pop(idx_subbest).Cost = new_cost;
-            if new_cost < BestSol.Cost; BestSol = pop(idx_subbest); end
-        end
-    end
-    if current_FEs >= MaxFEs; break; end
-
-    iter = iter + 1;
 end
+end
+
+
+%% ========================= Helper Function =============================
+function pos = apply_bounds(pos, lb, ub)
+% Apply_bounds  Two-stage boundary handling: reflect then clamp.
+%   Stage 1: Out-of-bounds components are reflected about the violated boundary.
+%   Stage 2: A clamping operation ensures feasibility if reflection overshoots.
+
+    % Stage 1: Reflection
+    below = pos < lb;
+    pos(below) = 2 * lb - pos(below);
+    above = pos > ub;
+    pos(above) = 2 * ub - pos(above);
+
+    % Stage 2: Clamping
+    pos = max(min(pos, ub), lb);
 end
