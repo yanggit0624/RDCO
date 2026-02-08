@@ -30,7 +30,7 @@ To replicate the benchmark results from the paper:
 
 If you use this code or the RDCO algorithm in your research, please cite our paper:
 
-"Lin Yang and Hongwen Xu, "Receptor-driven cycloidal optimization: Integrating biological control models with geometric search trajectories for engineering design optimization," Applied Mathematical Modelling, 2026. DOI: 10.1016/j.apm.2026.116827.
+"Lin Yang and Hongwen Xu, Receptor-driven cycloidal optimization: Integrating biological control models with geometric search trajectories for engineering design optimization, Applied Mathematical Modelling, 2026. DOI: 10.1016/j.apm.2026.116827."
 
 ---
 
